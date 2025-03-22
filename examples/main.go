@@ -8,8 +8,11 @@ import (
 )
 
 func main() {
-	fn := wrapper.Wrap(add)
-	fmt.Println(fn(5, -6))
+	fn := wrapper.Wrap(add,wrapper.WithPreHook(func (args ...any) error {
+		fmt.Println("Hello there")
+		return nil
+	}))
+	fmt.Println(fn(5, 6))
 }
 
 func add(a, b int) (int, error) {

@@ -2,6 +2,7 @@ package wrapper
 
 import (
 	"reflect"
+	"sync"
 )
 
 type PreHook func(args ...any) error
@@ -11,83 +12,114 @@ type WrapOption func(*wrapOptions)
 type wrapOptions struct {
 	preHook   PreHook
 	postHook  PostHook
-	errorHook func(err error)
+	errorHook func(error)
 }
 
+var cache sync.Map // key: uintptr, value: *wrapMetadata
+
+type wrapMetadata struct {
+	fnType   reflect.Type
+	numOut   int
+	errIndex int // -1 if no error return
+}
+
+// Wrap wraps a function fn with optional preHook, postHook and errorHook logic.
+// It still uses generics while caching reflection metadata for repeated calls.
 func Wrap[T any](fn T, opts ...WrapOption) T {
 	options := &wrapOptions{}
 	for _, opt := range opts {
 		opt(options)
 	}
+
 	fnValue := reflect.ValueOf(fn)
 	fnType := fnValue.Type()
 	if fnType.Kind() != reflect.Func {
 		panic("Wrap expects a function")
 	}
-	errorType := reflect.TypeOf((*error)(nil)).Elem()
+
+	// Try to get cached metadata for this function.
+	metaIface, ok := cache.Load(fnValue.Pointer())
+	var metadata *wrapMetadata
+	if ok {
+		metadata = metaIface.(*wrapMetadata)
+	} else {
+		errIndex := -1
+		if fnType.NumOut() > 0 {
+			lastType := fnType.Out(fnType.NumOut() - 1)
+			errorType := reflect.TypeOf((*error)(nil)).Elem()
+			if lastType.Implements(errorType) {
+				errIndex = fnType.NumOut() - 1
+			}
+		}
+		metadata = &wrapMetadata{
+			fnType:   fnType,
+			numOut:   fnType.NumOut(),
+			errIndex: errIndex,
+		}
+		cache.Store(fnValue.Pointer(), metadata)
+	}
+
+	// Create the wrapped function.
 	wrappedFn := reflect.MakeFunc(fnType, func(args []reflect.Value) (results []reflect.Value) {
+		// Pre-hook: convert arguments to []any inline.
 		if options.preHook != nil {
-			if err := callPreHook(args, options.preHook); err != nil {
-				handleErrorWithHook(err, options.errorHook)
-				return createErrorResults(fnType, err, errorType)
+			argInterfaces := make([]any, len(args))
+			for i, arg := range args {
+				argInterfaces[i] = arg.Interface()
+			}
+			if err := options.preHook(argInterfaces...); err != nil {
+				if options.errorHook != nil {
+					options.errorHook(err)
+				}
+				return createErrorResults(metadata, err)
 			}
 		}
+
 		results = fnValue.Call(args)
-		if isErrorPresent(results, errorType) {
-			err := results[len(results)-1].Interface().(error)
-			handleErrorWithHook(err, options.errorHook)
-			return createErrorResults(fnType, err, errorType)
-		}
-		if options.postHook != nil {
-			if err := callPostHook(results, options.postHook); err != nil {
-				handleErrorWithHook(err, options.errorHook)
-				return createErrorResults(fnType, err, errorType)
+
+		// If the function returns an error, check it once.
+		if metadata.errIndex != -1 {
+			lastResult := results[metadata.errIndex]
+			if !lastResult.IsNil() {
+				if err, ok := lastResult.Interface().(error); ok && err != nil {
+					if options.errorHook != nil {
+						options.errorHook(err)
+					}
+					return createErrorResults(metadata, err)
+				}
 			}
 		}
+
+		// Post-hook: convert results to []any inline.
+		if options.postHook != nil {
+			resInterfaces := make([]any, len(results))
+			for i, res := range results {
+				resInterfaces[i] = res.Interface()
+			}
+			if err := options.postHook(resInterfaces...); err != nil {
+				if options.errorHook != nil {
+					options.errorHook(err)
+				}
+				return createErrorResults(metadata, err)
+			}
+		}
+
 		return results
 	}).Interface()
+
 	return wrappedFn.(T)
 }
 
-func callPreHook(args []reflect.Value, preHook PreHook) error {
-	argInterfaces := make([]any, len(args))
-	for i, arg := range args {
-		argInterfaces[i] = arg.Interface()
-	}
-	return preHook(argInterfaces...)
-}
-
-func callPostHook(results []reflect.Value, postHook PostHook) error {
-	resultInterfaces := make([]any, len(results))
-	for i, result := range results {
-		resultInterfaces[i] = result.Interface()
-	}
-	return postHook(resultInterfaces...)
-}
-
-func isErrorPresent(results []reflect.Value, errorType reflect.Type) bool {
-	if len(results) == 0 {
-		return false
-	}
-	lastResult := results[len(results)-1]
-	return lastResult.Type().Implements(errorType) && !lastResult.IsNil()
-}
-
-func handleErrorWithHook(err error, errorHook func(error)) {
-	if errorHook != nil {
-		errorHook(err)
-	}
-}
-
-func createErrorResults(fnType reflect.Type, err error, errorType reflect.Type) []reflect.Value {
-	numOut := fnType.NumOut()
-	results := make([]reflect.Value, numOut)
-	for i := 0; i < numOut; i++ {
-		outType := fnType.Out(i)
-		if outType == errorType {
+// createErrorResults creates a slice of reflect.Values with zero values
+// for non-error return types and sets the error value where appropriate.
+func createErrorResults(meta *wrapMetadata, err error) []reflect.Value {
+	results := make([]reflect.Value, meta.numOut)
+	errorType := reflect.TypeOf((*error)(nil)).Elem()
+	for i := 0; i < meta.numOut; i++ {
+		if meta.fnType.Out(i) == errorType {
 			results[i] = reflect.ValueOf(err)
 		} else {
-			results[i] = reflect.Zero(outType)
+			results[i] = reflect.Zero(meta.fnType.Out(i))
 		}
 	}
 	return results
