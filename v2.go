@@ -1,5 +1,6 @@
 package wrapper
 
+/*
 import (
 	"reflect"
 	"sync"
@@ -15,6 +16,43 @@ type wrapOptions struct {
 	errorHook func(error)
 }
 
+type Func0[R any] func() (R, error)
+type Func1[A any, R any] func(A) (R, error)
+type Func2[A, B any, R any] func(A, B) (R, error)
+type Func3[A, B, C any, R any] func(A, B, C) (R, error)
+type Func4[A, B, C, D any, R any] func(A, B, C, D) (R, error)
+type Func5[A, B, C, D, E any, R any] func(A, B, C, D, E) (R, error)
+
+func preHook(preHook PreHook, errHook func(err error), args ...any) error {
+	if preHook != nil {
+		err := preHook(args...)
+		if err != nil && errHook != nil {
+			errHook(err)
+		}
+		return err
+	}
+	return nil
+}
+
+func postHook(postHook PostHook, errHook func(err error), results ...any) error {
+	if postHook != nil {
+		err := postHook(results...)
+		if err != nil && errHook != nil {
+			errHook(err)
+		}
+		return err
+	}
+	return nil
+}
+
+func errHook(errHook func(err error), err error) error {
+	if errHook != nil && err != nil {
+		errHook(err)
+		return err
+	}
+	return nil
+}
+
 func defaultWrapOptions(opts ...WrapOption) *wrapOptions {
 	o := &wrapOptions{}
 	for _, opt := range opts {
@@ -23,222 +61,105 @@ func defaultWrapOptions(opts ...WrapOption) *wrapOptions {
 	return o
 }
 
-type Func0[R any] func() (R, error)
-type Func1[A any, R any] func(A) (R, error)
-type Func2[A, B any, R any] func(A, B) (R, error)
-type Func3[A, B, C any, R any] func(A, B, C) (R, error)
-type Func4[A, B, C, D any, R any] func(A, B, C, D) (R, error)
-type Func5[A, B, C, D, E any, R any] func(A, B, C, D, E) (R, error)
-
 func Wrap0[R any](fn Func0[R], opts ...WrapOption) Func0[R] {
 	o := defaultWrapOptions(opts...)
 	return func() (R, error) {
-		if len(opts) == 0 {
-			return fn()
-		}
-		if o.preHook != nil {
-			if err := o.preHook(); err != nil {
-				if o.errorHook != nil {
-					o.errorHook(err)
-				}
-				var zr R
-				return zr, err
-			}
-		}
-		r, err := fn()
+		var zr R
+		err := preHook(o.preHook, o.errorHook)
 		if err != nil {
-			if o.errorHook != nil {
-				o.errorHook(err)
-			}
-			return r, err
+			return zr, err
 		}
-		if o.postHook != nil {
-			if err2 := o.postHook(r); err2 != nil {
-				if o.errorHook != nil {
-					o.errorHook(err2)
-				}
-				var zr R
-				return zr, err2
-			}
+		zr, err = fn()
+		if err != nil {
+			return zr, errHook(o.errorHook, err)
 		}
-		return r, nil
+		err = postHook(o.postHook, o.errorHook, zr)
+		return zr, err
 	}
 }
 
 func Wrap1[A any, R any](fn Func1[A, R], opts ...WrapOption) Func1[A, R] {
 	o := defaultWrapOptions(opts...)
 	return func(a A) (R, error) {
-		if len(opts) == 0 {
-			return fn(a)
-		}
-		if o.preHook != nil {
-			if err := o.preHook(a); err != nil {
-				if o.errorHook != nil {
-					o.errorHook(err)
-				}
-				var zr R
-				return zr, err
-			}
-		}
-		r, err := fn(a)
+		var zr R
+		err := preHook(o.preHook, o.errorHook, a)
 		if err != nil {
-			if o.errorHook != nil {
-				o.errorHook(err)
-			}
-			return r, err
+			return zr, err
 		}
-		if o.postHook != nil {
-			if err2 := o.postHook(a, r); err2 != nil {
-				if o.errorHook != nil {
-					o.errorHook(err2)
-				}
-				var zr R
-				return zr, err2
-			}
+		zr, err = fn(a)
+		if err != nil {
+			return zr, errHook(o.errorHook, err)
 		}
-		return r, nil
+		err = postHook(o.postHook, o.errorHook, zr)
+		return zr, err
 	}
 }
 
 func Wrap2[A, B any, R any](fn Func2[A, B, R], opts ...WrapOption) Func2[A, B, R] {
 	o := defaultWrapOptions(opts...)
 	return func(a A, b B) (R, error) {
-		if len(opts) == 0 {
-			return fn(a, b)
-		}
-		if o.preHook != nil {
-			if err := o.preHook(a, b); err != nil {
-				if o.errorHook != nil {
-					o.errorHook(err)
-				}
-				var zr R
-				return zr, err
-			}
-		}
-		r, err := fn(a, b)
+		var zr R
+		err := preHook(o.preHook, o.errorHook, a, b)
 		if err != nil {
-			if o.errorHook != nil {
-				o.errorHook(err)
-			}
-			return r, err
+			return zr, err
 		}
-		if o.postHook != nil {
-			if err2 := o.postHook(a, b, r); err2 != nil {
-				if o.errorHook != nil {
-					o.errorHook(err2)
-				}
-				var zr R
-				return zr, err2
-			}
+		zr, err = fn(a, b)
+		if err != nil {
+			return zr, errHook(o.errorHook, err)
 		}
-
-		return r, nil
+		err = postHook(o.postHook, o.errorHook, zr)
+		return zr, err
 	}
 }
 
 func Wrap3[A, B, C any, R any](fn Func3[A, B, C, R], opts ...WrapOption) Func3[A, B, C, R] {
 	o := defaultWrapOptions(opts...)
 	return func(a A, b B, c C) (R, error) {
-		if len(opts) == 0 {
-			return fn(a, b, c)
-		}
-		if o.preHook != nil {
-			if err := o.preHook(a, b, c); err != nil {
-				if o.errorHook != nil {
-					o.errorHook(err)
-				}
-				var zr R
-				return zr, err
-			}
-		}
-		r, err := fn(a, b, c)
+		var zr R
+		err := preHook(o.preHook, o.errorHook, a, b, c)
 		if err != nil {
-			if o.errorHook != nil {
-				o.errorHook(err)
-			}
-			return r, err
+			return zr, err
 		}
-		if o.postHook != nil {
-			if err2 := o.postHook(a, b, c, r); err2 != nil {
-				if o.errorHook != nil {
-					o.errorHook(err2)
-				}
-				var zr R
-				return zr, err2
-			}
+		zr, err = fn(a, b, c)
+		if err != nil {
+			return zr, errHook(o.errorHook, err)
 		}
-
-		return r, nil
+		err = postHook(o.postHook, o.errorHook, zr)
+		return zr, err
 	}
 }
 
 func Wrap4[A, B, C, D any, R any](fn Func4[A, B, C, D, R], opts ...WrapOption) Func4[A, B, C, D, R] {
 	o := defaultWrapOptions(opts...)
 	return func(a A, b B, c C, d D) (R, error) {
-		if len(opts) == 0 {
-			return fn(a, b, c, d)
-		}
-		if o.preHook != nil {
-			if err := o.preHook(a, b, c, d); err != nil {
-				if o.errorHook != nil {
-					o.errorHook(err)
-				}
-				var zr R
-				return zr, err
-			}
-		}
-		r, err := fn(a, b, c, d)
+		var zr R
+		err := preHook(o.preHook, o.errorHook, a, b, c, d)
 		if err != nil {
-			if o.errorHook != nil {
-				o.errorHook(err)
-			}
-			return r, err
+			return zr, err
 		}
-		if o.postHook != nil {
-			if err2 := o.postHook(a, b, c, d, r); err2 != nil {
-				if o.errorHook != nil {
-					o.errorHook(err2)
-				}
-				var zr R
-				return zr, err2
-			}
+		zr, err = fn(a, b, c, d)
+		if err != nil {
+			return zr, errHook(o.errorHook, err)
 		}
-		return r, nil
+		err = postHook(o.postHook, o.errorHook, zr)
+		return zr, err
 	}
 }
 
 func Wrap5[A, B, C, D, E any, R any](fn Func5[A, B, C, D, E, R], opts ...WrapOption) Func5[A, B, C, D, E, R] {
 	o := defaultWrapOptions(opts...)
 	return func(a A, b B, c C, d D, e E) (R, error) {
-		if len(opts) == 0 {
-			return fn(a, b, c, d, e)
-		}
-		if o.preHook != nil {
-			if err := o.preHook(a, b, c, d, e); err != nil {
-				if o.errorHook != nil {
-					o.errorHook(err)
-				}
-				var zr R
-				return zr, err
-			}
-		}
-		r, err := fn(a, b, c, d, e)
+		var zr R
+		err := preHook(o.preHook, o.errorHook, a, b, c, d, e)
 		if err != nil {
-			if o.errorHook != nil {
-				o.errorHook(err)
-			}
-			return r, err
+			return zr, err
 		}
-		if o.postHook != nil {
-			if err2 := o.postHook(a, b, c, d, e, r); err2 != nil {
-				if o.errorHook != nil {
-					o.errorHook(err2)
-				}
-				var zr R
-				return zr, err2
-			}
+		zr, err = fn(a, b, c, d, e)
+		if err != nil {
+			return zr, errHook(o.errorHook, err)
 		}
-		return r, nil
+		err = postHook(o.postHook, o.errorHook, zr)
+		return zr, err
 	}
 }
 
@@ -369,3 +290,4 @@ func WithErrorHook(hook func(err error)) WrapOption {
 		opts.errorHook = hook
 	}
 }
+*/
